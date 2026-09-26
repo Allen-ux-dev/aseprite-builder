@@ -6,7 +6,7 @@ on:
       - luma-music-build-20260926
     paths:
       - 'luma-src.tgz.b64'
-      - 'luma-final.patch.gz.b64'
+      - 'luma-final.part-*'
       - '.github/workflows/luma-android.yml'
   workflow_dispatch:
 
@@ -44,11 +44,17 @@ jobs:
         working-directory: luma
         shell: bash
         run: |
-          base64 -d ../luma-final.patch.gz.b64 | gzip -dc > /tmp/luma-final.patch
+          cat ../luma-final.part-00 ../luma-final.part-01 ../luma-final.part-02 ../luma-final.part-03 > /tmp/luma-final.patch.gz.b64
+          test "$(wc -c < /tmp/luma-final.patch.gz.b64)" -eq 15452
+          echo "98a968d12425f635b42da1b29042aa20b01903ea1f0a2ff9a5bf1c99972102fc  /tmp/luma-final.patch.gz.b64" | sha256sum -c -
+          base64 -d /tmp/luma-final.patch.gz.b64 | gzip -dc > /tmp/luma-final.patch
           patch --batch --forward -p1 < /tmp/luma-final.patch
           grep -q "recentTracks.map" src/main.jsx
           grep -q "onClick={()=>next()}" src/main.jsx
           grep -q "setSearchFilter(id)" src/main.jsx
+          grep -q "addToPlaylist" src/main.jsx
+          grep -q "removeFromPlaylist" src/main.jsx
+          grep -q "删除歌单" src/main.jsx
 
       - name: Install dependencies
         working-directory: luma
