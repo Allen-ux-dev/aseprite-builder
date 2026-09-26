@@ -6,6 +6,7 @@ on:
       - luma-music-build-20260926
     paths:
       - 'luma-src.tgz.b64'
+      - 'luma-final.patch.gz.b64'
       - '.github/workflows/luma-android.yml'
   workflow_dispatch:
 
@@ -31,49 +32,23 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Unpack Luma source
+      - name: Unpack verified Luma base source
         shell: bash
         run: |
           mkdir -p luma
           base64 -d luma-src.tgz.b64 > /tmp/luma-src.tgz
           tar -xzf /tmp/luma-src.tgz -C luma
-          cd luma
-          printf 'Source SHA256: '
           sha256sum /tmp/luma-src.tgz
 
-      - name: Apply final UI and playback logic fixes
+      - name: Apply final UI and playback patch
         working-directory: luma
         shell: bash
         run: |
-          python - <<'PY'
-          from pathlib import Path
-          p=Path('src/main.jsx')
-          s=p.read_text()
-          s=s.replace("const [playing,setPlaying]=useState(false); const [progress,setProgress]=useState(32);", "const [playing,setPlaying]=useState(false); const [shuffleOn,setShuffleOn]=useState(false); const [repeatMode,setRepeatMode]=useState('off'); const repeatRef=useRef('off'); const [progress,setProgress]=useState(32);")
-          s=s.replace("useEffect(()=>{playingRef.current=playing},[playing]);", "useEffect(()=>{playingRef.current=playing},[playing]);\\n useEffect(()=>{repeatRef.current=repeatMode},[repeatMode]);")
-          s=s.replace("const onEnded=()=>nextRef.current();", "const onEnded=()=>{if(repeatRef.current==='one'){a.currentTime=0;a.play().catch(()=>{})}else nextRef.current(true)};")
-          old=""" function playTrack(id){setCurrentId(id);setQueue(q=>q.includes(id)?q:[id,...q]);setProgress(0);setPlaying(true)}
-           function next(){const i=queue.indexOf(currentId);const id=queue[(i+1+queue.length)%queue.length];if(id)playTrack(id)}
-           function prev(){const i=queue.indexOf(currentId);const id=queue[(i-1+queue.length)%queue.length];if(id)playTrack(id)}
-           nextRef.current=next;"""
-          new=""" function playTrack(id){setCurrentId(id);setQueue(q=>q.includes(id)?q:[id,...q]);setDb(d=>({...d,recents:[id,...(d.recents||[]).filter(x=>x!==id)].slice(0,50)}));setProgress(0);setPlaying(true)}
-           function next(fromEnded=false){if(!queue.length)return;const i=Math.max(0,queue.indexOf(currentId));if(shuffleOn&&queue.length>1){const choices=queue.filter(id=>id!==currentId);return playTrack(choices[Math.floor(Math.random()*choices.length)])}if(i===queue.length-1&&repeatMode==='off'&&fromEnded){setPlaying(false);setProgress(0);return}const id=queue[(i+1)%queue.length];if(id)playTrack(id)}
-           function prev(){if(!queue.length)return;const i=Math.max(0,queue.indexOf(currentId));const id=queue[(i-1+queue.length)%queue.length];if(id)playTrack(id)}
-           nextRef.current=next;"""
-          if old not in s:
-              raise SystemExit('navigation patch anchor missing')
-          s=s.replace(old,new)
-          s=s.replace("<button><Shuffle/></button><button onClick={prev}", "<button className={shuffleOn?'active':''} onClick={()=>setShuffleOn(x=>!x)} aria-label=\\\"随机播放\\\"><Shuffle/></button><button onClick={prev}")
-          s=s.replace("<button><Repeat2/></button></div>", "<button className={repeatMode!=='off'?'active':''} onClick={()=>setRepeatMode(m=>m==='off'?'all':m==='all'?'one':'off')} aria-label={\\`循环模式：\\${repeatMode}\\`}><Repeat2/>{repeatMode==='one'&&<small className=\\\"repeat-one\\\">1</small>}</button></div>")
-          oldrow='function SettingsPage(){const Row=({icon:Icon,title,sub,children,onClick})=><button className="setting-row" onClick={onClick}><span className="setting-icon"><Icon/></span><span className="setting-copy"><b>{title}</b>{sub&&<small>{sub}</small>}</span>{children||<span>›</span>}</button>;'
-          newrow='function SettingsPage(){const Row=({icon:Icon,title,sub,children,onClick})=><div className={\\`setting-row \\${onClick?\\\'clickable\\\':\\\'\\\'}\\`} role={onClick?\\\'button\\\':undefined} tabIndex={onClick?0:undefined} onClick={onClick} onKeyDown={e=>{if(onClick&&(e.key===\\\'Enter\\\'||e.key===\\\' \\\')){e.preventDefault();onClick()}}}><span className="setting-icon"><Icon/></span><span className="setting-copy"><b>{title}</b>{sub&&<small>{sub}</small>}</span>{children||<span>›</span>}</div>;'
-          if oldrow not in s:
-              raise SystemExit('settings row patch anchor missing')
-          s=s.replace(oldrow,newrow)
-          p.write_text(s)
-          css=Path('src/styles.css')
-          css.write_text(css.read_text()+"\\n.player-controls button.active{color:var(--accent,#8b7cff)}\\n.player-controls button{position:relative}\\n.repeat-one{position:absolute;font-size:9px;font-weight:800;right:2px;bottom:2px}\\n.setting-row.clickable{cursor:pointer}\\n")
-          PY
+          base64 -d ../luma-final.patch.gz.b64 | gzip -dc > /tmp/luma-final.patch
+          patch --batch --forward -p1 < /tmp/luma-final.patch
+          grep -q "recentTracks.map" src/main.jsx
+          grep -q "onClick={()=>next()}" src/main.jsx
+          grep -q "setSearchFilter(id)" src/main.jsx
 
       - name: Install dependencies
         working-directory: luma
